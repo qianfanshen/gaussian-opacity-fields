@@ -48,6 +48,9 @@ class Scene:
         elif os.path.exists(os.path.join(args.source_path, "metadata.json")):
             print("Found metadata.json file, assuming multi scale Blender data set!")
             scene_info = sceneLoadTypeCallbacks["Multi-scale"](args.source_path, args.white_background, args.eval, args.load_allres)
+        elif os.path.exists(os.path.join(args.source_path, "meta_data.json")):
+            print("Found meta_data.json file, assuming kitti360 data set!")
+            scene_info = sceneLoadTypeCallbacks["Kitti360"](args.source_path, args.white_background, args.eval)
         else:
             assert False, "Could not recognize scene type!"
 

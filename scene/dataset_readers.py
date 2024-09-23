@@ -34,6 +34,8 @@ class CameraInfo(NamedTuple):
     image_name: str
     width: int
     height: int
+    cx_ratio: float
+    cy_ratio: float
 
 class SceneInfo(NamedTuple):
     point_cloud: BasicPointCloud
@@ -60,7 +62,7 @@ def getNerfppNorm(cam_info):
 
     center, diagonal = get_center_and_diag(cam_centers)
     radius = diagonal * 1.1
-
+    # radius = 10
     translate = -center
 
     return {"translate": translate, "radius": radius}
@@ -114,7 +116,8 @@ def fetchPly(path):
     vertices = plydata['vertex']
     positions = np.vstack([vertices['x'], vertices['y'], vertices['z']]).T
     colors = np.vstack([vertices['red'], vertices['green'], vertices['blue']]).T / 255.0
-    normals = np.vstack([vertices['nx'], vertices['ny'], vertices['nz']]).T
+    #normals = np.vstack([vertices['nx'], vertices['ny'], vertices['nz']]).T
+    normals = np.zeros((positions.shape[0], 3))
     return BasicPointCloud(points=positions, colors=colors, normals=normals)
 
 def storePly(path, xyz, rgb):
@@ -133,6 +136,99 @@ def storePly(path, xyz, rgb):
     vertex_element = PlyElement.describe(elements, 'vertex')
     ply_data = PlyData([vertex_element])
     ply_data.write(path)
+    
+def readStudioCameras(path, white_background):
+    train_cam_infos, test_cam_infos = [], []
+    with open(os.path.join(path, 'meta_data.json')) as json_file:
+        meta_data = json.load(json_file)
+
+        # verts = {}
+        # if 'verts' in meta_data and not ignore_dynamic:
+        #     verts_list = meta_data['verts']
+        #     for k, v in verts_list.items():
+        #         verts[k] = np.array(v)
+
+        frames = meta_data['frames']
+        for idx, frame in enumerate(frames):
+            matrix = np.linalg.inv(np.array(frame['camtoworld']))
+            R = matrix[:3, :3]
+            T = matrix[:3, 3]
+            R = np.transpose(R)
+
+            rgb_path = os.path.join(path, frame['rgb_path'].replace('./', ''))
+
+            rgb_split = rgb_path.split('/')
+            image_name = '_'.join([rgb_split[-2], rgb_split[-1][:-4]])
+            image = Image.open(rgb_path)
+
+            # semantic_2d = None
+            # semantic_pth = rgb_path.replace("images", "semantics").replace('.png', '.npy').replace('.jpg', '.npy')
+            # if os.path.exists(semantic_pth):
+            #     semantic_2d = np.load(semantic_pth)
+            #     semantic_2d[(semantic_2d == 14) | (semantic_2d == 15)] = 13
+
+            # optical_path = rgb_path.replace("images", "flow").replace('.png', '_flow.npy').replace('.jpg', '_flow.npy')
+            # if os.path.exists(optical_path):
+            #     optical_image = np.load(optical_path)
+            # else:
+            #     optical_image = None
+            
+            intrinsic = np.array(frame['intrinsics'])
+            FovX = focal2fov(intrinsic[0, 0], image.size[0])
+            FovY = focal2fov(intrinsic[1, 1], image.size[1])
+            cx, cy = intrinsic[0, 2], intrinsic[1, 2]
+            w, h = image.size
+            
+            cam_info = CameraInfo(uid=idx, R=R, T=T, FovY=FovY, FovX=FovX, image=image,
+                              image_path=rgb_path, image_name=image_name, width=w, height=h,
+                              cx_ratio=2*cx/w, cy_ratio=2*cy/h)
+            
+            if idx < 20:
+                if idx % 4==0 or idx % 4 ==1:
+                    train_cam_infos.append(cam_info)
+            elif idx % 8 < 2:
+                train_cam_infos.append(cam_info)
+            elif idx % 8 >= 4 and idx % 8 <= 5:
+                test_cam_infos.append(cam_info)
+            else:
+                continue
+            
+    return train_cam_infos, test_cam_infos
+
+def readStudioInfo(path, white_background, eval):
+    train_cam_infos, test_cam_infos = readStudioCameras(path, white_background)
+
+    print(f'Loaded {len(train_cam_infos)} train cameras and {len(test_cam_infos)} test cameras')
+    nerf_normalization = getNerfppNorm(train_cam_infos)
+
+    ply_path = os.path.join(path, "points3d.ply")
+    # ply_path = os.path.join(path, 'lidar', 'cat.ply')
+    if not os.path.exists(ply_path):
+        # Since this data set has no colmap data, we start with random points
+        num_pts = 500_000
+        print(f"Generating random point cloud ({num_pts})...")
+
+        # We create random points inside the bounds of the synthetic Blender scenes
+        AABB = [[-20, -25, -20], [20, 5, 80]]
+        xyz = np.random.uniform(AABB[0], AABB[1], (500000, 3))
+        # xyz = np.load(os.path.join(path, 'lidar_point.npy'))
+        num_pts = xyz.shape[0]
+        shs = np.ones((num_pts, 3)) * 0.5
+        pcd = BasicPointCloud(points=xyz, colors=SH2RGB(shs), normals=np.zeros((num_pts, 3)))
+
+        storePly(ply_path, xyz, SH2RGB(shs) * 255)
+    try:
+        pcd = fetchPly(ply_path)
+    except Exception as e:
+        print('When loading point clound, meet error:', e)
+        exit(0)
+
+    scene_info = SceneInfo(point_cloud=pcd,
+                           train_cameras=train_cam_infos,
+                           test_cameras=test_cam_infos,
+                           nerf_normalization=nerf_normalization,
+                           ply_path=ply_path)
+    return scene_info
 
 def readColmapSceneInfo(path, images, eval, llffhold=8):
     try:
@@ -347,4 +443,5 @@ sceneLoadTypeCallbacks = {
     "Colmap": readColmapSceneInfo,
     "Blender" : readNerfSyntheticInfo,
     "Multi-scale": readMultiScaleNerfSyntheticInfo,
+    "Kitti360": readStudioInfo,
 }
