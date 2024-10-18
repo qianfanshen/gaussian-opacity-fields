@@ -146,9 +146,10 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
 
         
         render_pkg = render(viewpoint_cam, gaussians, pipe, background, kernel_size=dataset.kernel_size)
-        rendering, viewspace_point_tensor, visibility_filter, radii = render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"]
+        rendering, viewspace_point_tensor, visibility_filter, radii, feats= render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"], render["feats"]
         
         image = rendering[:3, :, :]
+        floor_mask = viewpoint_cam.floor_mask.to(torch.bool)
         
         # rgb Loss
         gt_image = viewpoint_cam.original_image.cuda()

@@ -58,6 +58,7 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
     means3D = pc.get_xyz
     means2D = screenspace_points
     opacity = pc.get_opacity_with_3D_filter
+    feats3D = pc.get_3D_features
 
     # If precomputed 3d covariance is provided, use it. If not, then it will be computed from
     # scaling / rotation by the rasterizer.
@@ -96,7 +97,7 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
         colors_precomp = override_color
 
     # Rasterize visible Gaussians to image, obtain their radii (on screen). 
-    rendered_image, radii = rasterizer(
+    rendered_image, radii, feats = rasterizer(
         means3D = means3D,
         means2D = means2D,
         shs = shs,
@@ -105,6 +106,7 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
         scales = scales,
         rotations = rotations,
         cov3D_precomp = cov3D_precomp,
+        feats3D = feats3D,
         view2gaussian_precomp=view2gaussian_precomp)
 
     # Those Gaussians that were frustum culled or had a radius of 0 were not visible.
@@ -112,7 +114,8 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
     return {"render": rendered_image,
             "viewspace_points": screenspace_points,
             "visibility_filter" : radii > 0,
-            "radii": radii}
+            "radii": radii, 
+            "feats": feats}
 
 
 def integrate(points3D, viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, kernel_size: float, scaling_modifier = 1.0, override_color = None, subpixel_offset=None):
@@ -158,6 +161,7 @@ def integrate(points3D, viewpoint_camera, pc : GaussianModel, pipe, bg_color : t
     means3D = pc.get_xyz
     means2D = screenspace_points
     opacity = pc.get_opacity_with_3D_filter
+    feats3D = pc.get_3D_features
 
     # If precomputed 3d covariance is provided, use it. If not, then it will be computed from
     # scaling / rotation by the rasterizer.
@@ -196,7 +200,7 @@ def integrate(points3D, viewpoint_camera, pc : GaussianModel, pipe, bg_color : t
         colors_precomp = override_color
 
     # Rasterize visible Gaussians to image, obtain their radii (on screen). 
-    rendered_image, alpha_integrated, color_integrated, radii = rasterizer.integrate(
+    rendered_image, alpha_integrated, color_integrated, radii, feats = rasterizer.integrate(
         points3D = points3D,
         means3D = means3D,
         means2D = means2D,
@@ -206,6 +210,7 @@ def integrate(points3D, viewpoint_camera, pc : GaussianModel, pipe, bg_color : t
         scales = scales,
         rotations = rotations,
         cov3D_precomp = cov3D_precomp,
+        feats3D = feats3D,
         view2gaussian_precomp=view2gaussian_precomp)
 
     # Those Gaussians that were frustum culled or had a radius of 0 were not visible.
@@ -215,4 +220,5 @@ def integrate(points3D, viewpoint_camera, pc : GaussianModel, pipe, bg_color : t
             "color_integrated": color_integrated,
             "viewspace_points": screenspace_points,
             "visibility_filter" : radii > 0,
-            "radii": radii}
+            "radii": radii, 
+            "feats": feat}

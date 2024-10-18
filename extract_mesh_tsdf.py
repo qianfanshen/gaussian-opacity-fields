@@ -17,19 +17,29 @@ def tsdf_fusion(model_path, name, iteration, views, gaussians, pipeline, backgro
     render_path = os.path.join(model_path, name, "ours_{}".format(iteration), "tsdf")
 
     makedirs(render_path, exist_ok=True)
-    o3d_device = o3d.core.Device("CUDA:0")
+    o3d_device = o3d.core.Device("CPU:0")
     
-    voxel_size = 0.002
+    voxel_size = 0.005
     alpha_thres=0.5
     
-    vbg = o3d.t.geometry.VoxelBlockGrid(
-            attr_names=('tsdf', 'weight', 'color'),
-            attr_dtypes=(o3c.float32, o3c.float32, o3c.float32),
-            attr_channels=((1), (1), (3)),
-            voxel_size=voxel_size,
-            block_resolution=16,
-            block_count=50000,
-            device=o3d_device)
+    # vbg = o3d.t.geometry.VoxelBlockGrid(
+    #         attr_names=('tsdf', 'weight', 'color'),
+    #         attr_dtypes=(o3c.float32, o3c.float32, o3c.float32),
+    #         attr_channels=((1), (1), (3)),
+    #         voxel_size=voxel_size,
+    #         block_resolution=16,
+    #         block_count=50000,
+    #         device=o3d_device)
+    
+    volume = o3d.pipelines.integration.ScalableTSDFVolume(
+            voxel_length= voxel_size,
+            sdf_trunc=0.00,
+            color_type=o3d.pipelines.integration.TSDFVolumeColorType.RGB8
+        )
+    
+    depth_maps = []
+    rgb_maps = []
+    alpha_maps
     
     with torch.no_grad():
         for _, view in enumerate(tqdm(views, desc="Rendering progress")):
@@ -50,8 +60,14 @@ def tsdf_fusion(model_path, name, iteration, views, gaussians, pipeline, backgro
             ndc2pix = torch.tensor([
                 [W / 2, 0, 0, (W-1) / 2],
                 [0, H / 2, 0, (H-1) / 2],
-                [0, 0, 0, 1]]).float().cuda().T
-            intrins =  (view.projection_matrix @ ndc2pix)[:3,:3].T
+                [0, 0, 0, 1]]).float().cpu().T
+            #torch.cuda.empty_cache()
+
+            print(f"ndc2pix device: {ndc2pix.device}")
+            #print(f"view.projection_matrix device: {view.device}")
+            view_projection_matrix = view.projection_matrix.cpu()
+
+            intrins =  (view_projection_matrix @ ndc2pix)[:3,:3].T
             intrinsic=o3d.camera.PinholeCameraIntrinsic(
                 width=W,
                 height=H,
@@ -93,7 +109,7 @@ def extract_mesh(dataset : ModelParams, iteration : int, pipeline : PipelinePara
         gaussians.load_ply(os.path.join(dataset.model_path, "point_cloud", f"iteration_{iteration}", "point_cloud.ply"))
         
         bg_color = [1,1,1] if dataset.white_background else [0, 0, 0]
-        background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
+        background = torch.tensor(bg_color, dtype=torch.float32, device="cpu")
         kernel_size = dataset.kernel_size
         
         cams = train_cameras
@@ -112,6 +128,6 @@ if __name__ == "__main__":
     random.seed(0)
     np.random.seed(0)
     torch.manual_seed(0)
-    torch.cuda.set_device(torch.device("cuda:0"))
+    #torch.cuda.set_device(torch.device("cpu"))
     
     extract_mesh(model.extract(args), args.iteration, pipeline.extract(args))

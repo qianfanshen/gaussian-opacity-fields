@@ -406,7 +406,7 @@ __global__ void preprocessCUDA(int P, int D, int M,
 // Main rasterization method. Collaboratively works on one tile per
 // block, each thread treats one pixel. Alternates between fetching 
 // and rasterizing data.
-template <uint32_t CHANNELS>
+template <uint32_t CHANNELS, uint32_t FEATS_CHANNELS>
 __global__ void __launch_bounds__(BLOCK_X * BLOCK_Y)
 renderCUDA(
 	const uint2* __restrict__ ranges,
@@ -416,6 +416,7 @@ renderCUDA(
 	const float2* __restrict__ subpixel_offset,
 	const float2* __restrict__ points_xy_image,
 	const float* __restrict__ features,
+	const float* __restrict__ feats3D,
 	const float* __restrict__ view2gaussian,
 	const float* __restrict__ cov3Ds,
 	const float* viewmatrix,
@@ -428,7 +429,8 @@ renderCUDA(
 	float* __restrict__ center_depth,
 	float4* __restrict__ point_alphas,
 	const float* __restrict__ bg_color,
-	float* __restrict__ out_color)
+	float* __restrict__ out_color,
+	float* __restrict__ out_feats)
 {
 	// Identify current tile and associated min/max pixel range.
 	auto block = cg::this_thread_block();
@@ -463,6 +465,7 @@ renderCUDA(
 	uint32_t last_contributor = 0;
 	uint32_t max_contributor = -1;
 	float C[CHANNELS*2+2] = { 0 };
+	float F[FEATS_CHANNELS] = {0};
 
 	float dist1 = {0};
 	float dist2 = {0};
@@ -559,7 +562,9 @@ renderCUDA(
 			// Eq. (3) from 3D Gaussian splatting paper.
 			for (int ch = 0; ch < CHANNELS; ch++)
 				C[ch] += features[collected_id[j] * CHANNELS + ch] * alpha * T;
-			
+	
+			for (int ch = 0; ch < FEATS_CHANNELS; ch++)
+				F[ch] += feats3D[collected_id[j] * FEATS_CHANNELS + ch] * alpha * T;
 			// normal
 			for (int ch = 0; ch < CHANNELS; ch++)
 				C[CHANNELS + ch] += normal_normalized[ch] * alpha * T;
@@ -599,6 +604,8 @@ renderCUDA(
 		for (int ch = 0; ch < CHANNELS; ch++)
 			out_color[ch * H * W + pix_id] = C[ch] + T * bg_color[ch];
 
+		for (int ch = 0; ch < FEATS_CHANNELS; ch++)
+			out_feats[ch * H * W + pix_id] = F[ch];
 		// normal
 		for (int ch = 0; ch < CHANNELS; ch++){
 			out_color[(CHANNELS + ch) * H * W + pix_id] = C[CHANNELS+ch];
@@ -620,6 +627,7 @@ void FORWARD::render(
 	const float2* subpixel_offset,
 	const float2* means2D,
 	const float* colors,
+	const float* feats3D,
 	const float* view2gaussian,
 	const float* cov3Ds,
 	const float* viewmatrix,
@@ -632,9 +640,10 @@ void FORWARD::render(
 	float* center_depth,
 	float4* center_alphas,
 	const float* bg_color,
-	float* out_color)
+	float* out_color,
+	float* out_feats)
 {
-	renderCUDA<NUM_CHANNELS> << <grid, block >> > (
+	renderCUDA<NUM_CHANNELS, NUM_FEATS_CHANNELS> << <grid, block >> > (
 		ranges,
 		point_list,
 		W, H,
@@ -642,6 +651,7 @@ void FORWARD::render(
 		subpixel_offset,
 		means2D,
 		colors,
+		feats3D,
 		view2gaussian,
 		cov3Ds,
 		viewmatrix,
@@ -654,7 +664,8 @@ void FORWARD::render(
 		center_depth,
 		center_alphas,
 		bg_color,
-		out_color);
+		out_color,
+		out_feats);
 }
 
 void FORWARD::preprocess(int P, int D, int M,

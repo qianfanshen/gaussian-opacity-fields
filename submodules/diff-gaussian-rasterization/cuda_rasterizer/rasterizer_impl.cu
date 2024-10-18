@@ -253,6 +253,7 @@ int CudaRasterizer::Rasterizer::forward(
 	const int width, int height,
 	const float* means3D,
 	const float* shs,
+	const float* feats3D,
 	const float* colors_precomp,
 	const float* opacities,
 	const float* scales,
@@ -268,6 +269,7 @@ int CudaRasterizer::Rasterizer::forward(
 	const float* subpixel_offset,
 	const bool prefiltered,
 	float* out_color,
+	float* out_feats,
 	int* radii,
 	bool debug)
 {
@@ -387,6 +389,7 @@ int CudaRasterizer::Rasterizer::forward(
 		(float2*)subpixel_offset,
 		geomState.means2D,
 		feature_ptr,
+		feats3D,
 		view2gaussian,
 		cov3Ds,
 		viewmatrix,
@@ -399,7 +402,8 @@ int CudaRasterizer::Rasterizer::forward(
 		imgState.center_depth,
 		imgState.center_alphas,
 		background,
-		out_color), debug)
+		out_color,
+		out_feats), debug)
 
 	return num_rendered;
 }
@@ -418,6 +422,7 @@ void CudaRasterizer::Rasterizer::backward(
 	const float scale_modifier,
 	const float* rotations,
 	const float* cov3D_precomp,
+	const float* feats3D,
 	const float* viewmatrix,
 	const float* projmatrix,
 	const float* campos,
@@ -429,10 +434,12 @@ void CudaRasterizer::Rasterizer::backward(
 	char* binning_buffer,
 	char* img_buffer,
 	const float* dL_dpix,
+	const float* dL_dfeat2D,
 	float* dL_dmean2D,
 	float* dL_dconic,
 	float* dL_dopacity,
 	float* dL_dcolor,
+	float* dL_dfeat3D,
 	float* dL_dmean3D,
 	float* dL_dcov3D,
 	float* dL_dsh,

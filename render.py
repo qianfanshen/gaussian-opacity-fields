@@ -20,20 +20,53 @@ from utils.general_utils import safe_state
 from argparse import ArgumentParser
 from arguments import ModelParams, PipelineParams, get_combined_args
 from gaussian_renderer import GaussianModel
+import numpy as np
+import imageio
+
+def apply_depth_colormap(depth, min=None, max=None):
+    near_plane = float(torch.min(depth)) if min is None else min
+    far_plane = float(torch.max(depth)) if max is None else max
+
+    depth = (depth - near_plane) / (far_plane - near_plane + 1e-10)
+    depth = torch.clip(depth, 0, 1)
+    
+    return depth
 
 def render_set(model_path, name, iteration, views, gaussians, pipeline, background, kernel_size, scale_factor):
     render_path = os.path.join(model_path, name, "ours_{}".format(iteration), f"test_preds_{scale_factor}")
-    gts_path = os.path.join(model_path, name, "ours_{}".format(iteration), f"gt_{scale_factor}")\
-
+    gts_path = os.path.join(model_path, name, "ours_{}".format(iteration), f"gt_{scale_factor}")
+    normals_path = os.path.join(model_path, name, "ours_{}".format(iteration), f"normal_{scale_factor}")
+    depths_path = os.path.join(model_path, name, "ours_{}".format(iteration), f"depth_{scale_factor}")
+    depths_img_path = os.path.join(model_path, name, "ours_{}".format(iteration), f"depth_img_{scale_factor}")
+    
     makedirs(render_path, exist_ok=True)
     makedirs(gts_path, exist_ok=True)
+    makedirs(normals_path, exist_ok=True)
+    makedirs(depths_path, exist_ok=True)
+    makedirs(depths_img_path, exist_ok=True)
 
     for idx, view in enumerate(tqdm(views, desc="Rendering progress")):
         rendering = render(view, gaussians, pipeline, background, kernel_size=kernel_size)["render"]
+        print(rendering.shape)
+        normal = 0.5 + 0.5 * rendering[3:6, :, :]
+        depth = rendering[6:7, :, :]
         rendering = rendering[:3, :, :]
+        depth_img = apply_depth_colormap(depth)
+        # print(normal.shape, normal.dtype)
+        # print(normal.shape, normal.dtype)
+        print(depth.shape)
+        print(depth.dtype)
+        print(depth[:, :3, :1])
+        print(depth[:, -3:-1, -3:-1])
         gt = view.original_image[0:3, :, :]
         torchvision.utils.save_image(rendering, os.path.join(render_path, '{0:05d}'.format(idx) + ".png"))
         torchvision.utils.save_image(gt, os.path.join(gts_path, '{0:05d}'.format(idx) + ".png"))
+        torchvision.utils.save_image(normal, os.path.join(normals_path, '{0:05d}'.format(idx) + ".png"))
+        torchvision.utils.save_image(depth_img, os.path.join(depths_img_path, '{0:05d}'.format(idx) + ".png"))
+        depth_numpy = depth.squeeze(0).cpu().numpy()
+        imageio.imwrite(os.path.join(depths_path, '{0:05d}'.format(idx) + ".tiff"), depth_numpy.astype(np.float32))
+        # depth_numpy = depth.squeeze(0).cpu().numpy()
+        # np.savetxt(os.path.join(depths_path, '{0:05d}'.format(idx) + ".txt"), depth_numpy)
 
 def render_sets(dataset : ModelParams, iteration : int, pipeline : PipelineParams, skip_train : bool, skip_test : bool):
     with torch.no_grad():

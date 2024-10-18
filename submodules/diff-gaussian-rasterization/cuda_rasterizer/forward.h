@@ -60,6 +60,7 @@ namespace FORWARD
 		const float2* subpixel_offset,
 		const float2* points_xy_image,
 		const float* features,
+		const float* feats3D,
 		const float* view2gaussian,
 		const float* cov3Ds,
 		const float* viewmatrix,
@@ -72,7 +73,8 @@ namespace FORWARD
 		float* center_depth,
 		float4* center_alphas,
 		const float* bg_color,
-		float* out_color);
+		float* out_color,
+		float* out_feats);
 
 	// Perform initial steps for each Point prior to integration.
 	void preprocess_points(int PN, int D, int M,
@@ -101,6 +103,7 @@ namespace FORWARD
 		const float2* subpixel_offset,
 		const float2* points2D,
 		const float* features,
+		const float* feats3D,
 		const float* view2gaussian,
 		const float* cov3Ds,
 		const float* viewmatrix,
@@ -114,6 +117,7 @@ namespace FORWARD
 		// float4* center_alphas,
 		const float* bg_color,
 		float* out_color,
+		float* out_feats,
 		float* out_alpha_integrated,
 		float* out_color_integrated);
 }
