@@ -485,6 +485,7 @@ void CudaRasterizer::Rasterizer::backward(
 		geomState.means2D,
 		geomState.conic_opacity,
 		color_ptr,
+		feats3D,
 		view2gaussian_ptr,
 		cov3D_ptr,
 		viewmatrix,
@@ -496,10 +497,12 @@ void CudaRasterizer::Rasterizer::backward(
 		imgState.center_depth,
 		imgState.center_alphas,
 		dL_dpix,
+		dL_dfeat2D,
 		(float3*)dL_dmean2D,
 		(float4*)dL_dconic,
 		dL_dopacity,
 		dL_dcolor,
+		dL_dfeat3D,
 		dL_dscale,
 	    dL_dview2gaussian), debug)
 
