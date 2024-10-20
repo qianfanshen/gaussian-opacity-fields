@@ -631,7 +631,7 @@ __global__ void preprocessCUDA(
 }
 
 // Backward version of the rendering procedure.
-template <uint32_t C>
+template <uint32_t C, uint32_t FC>
 __global__ void __launch_bounds__(BLOCK_X * BLOCK_Y)
 renderCUDA(
 	const uint2* __restrict__ ranges,
@@ -643,6 +643,7 @@ renderCUDA(
 	const float2* __restrict__ points_xy_image,
 	const float4* __restrict__ conic_opacity,
 	const float* __restrict__ colors,
+	const float* __restrict__ feats3D,
 	const float* __restrict__ view2gaussian,
 	const float* __restrict__ cov3Ds,
 	const float* viewmatrix,
@@ -654,10 +655,12 @@ renderCUDA(
 	const float* __restrict__ center_depth,
 	const float4* __restrict__ point_alphas,
 	const float* __restrict__ dL_dpixels,
+	const float* __restrict__ dL_dfeats2D,
 	float3* __restrict__ dL_dmean2D, // we don't need this
 	float4* __restrict__ dL_dconic2D, // we don't need this
 	float* __restrict__ dL_dopacity,
 	float* __restrict__ dL_dcolors,
+	float* __restrict__ dL_dfeats3D,
 	float* __restrict__ dL_dscales,
 	float* __restrict__ dL_dview2gaussian)
 {
@@ -685,6 +688,7 @@ renderCUDA(
 	__shared__ float2 collected_xy[BLOCK_SIZE];
 	__shared__ float4 collected_conic_opacity[BLOCK_SIZE];
 	__shared__ float collected_colors[C * BLOCK_SIZE];
+	__shared__ float collected_feats[FC * BLOCK_SIZE];
 	__shared__ float collected_view2gaussian[BLOCK_SIZE * 10];
 	
 	// In the forward, we stored the final value for T, the
@@ -712,11 +716,17 @@ renderCUDA(
 	const int max_contributor = inside ? n_contrib[pix_id + H * W] : 0;
 	float accum_rec[C] = { 0 };
 	float dL_dpixel[C]; // RGB
+	float accum_feat_rec[FC] = { 0 };
+	float dL_dfeat[FC];
 	float dL_dnormal2D[3]; // Normal
 	float dL_dmax_depth = 0;
 	if (inside){
 		for (int i = 0; i < C; i++)
 			dL_dpixel[i] = dL_dpixels[i * H * W + pix_id];
+		for (int i = 0; i < FC; i++)
+		{
+			dL_dfeat[i] = dL_dfeats2D[i * H * W + pix_id];
+		}
 		for (int i = 0; i < 3; i++)
 			dL_dnormal2D[i] = dL_dpixels[(C+i) * H * W + pix_id];
 		dL_dmax_depth = dL_dpixels[DEPTH_OFFSET * H * W + pix_id];
@@ -724,6 +734,7 @@ renderCUDA(
 	
 	float last_alpha = 0;
 	float last_color[C] = { 0 };
+	float last_feat[FC] = { 0 };
 	float last_normal[3] = { 0 };
 	float accum_depth_rec = 0;
 	float accum_alpha_rec = 0;
@@ -749,7 +760,10 @@ renderCUDA(
 			collected_conic_opacity[block.thread_rank()] = conic_opacity[coll_id];
 			for (int i = 0; i < C; i++)
 				collected_colors[i * BLOCK_SIZE + block.thread_rank()] = colors[coll_id * C + i];
-			
+			for (int j = 0; j < FC; j++)
+			{
+				collected_feats[j * BLOCK_SIZE + block.thread_rank()] = feats3D[coll_id * FC + j];
+			}
 			for (int ii = 0; ii < 10; ii++)
 				collected_view2gaussian[10 * block.thread_rank() + ii] = view2gaussian[coll_id * 10 + ii];
 		}
@@ -834,6 +848,17 @@ renderCUDA(
 				// Atomic, since this pixel is just one of potentially
 				// many that were affected by this Gaussian.
 				atomicAdd(&(dL_dcolors[global_id * C + ch]), dchannel_dcolor * dL_dchannel);
+			}
+			for (int ch = 0; ch < FC; ch++)
+			{
+				const float c_f = collected_feats[ch * BLOCK_SIZE + j];
+				// Update last color (to be used in the next iteration)
+				accum_feat_rec[ch] = last_alpha * last_feat[ch] + (1.f - last_alpha) * accum_feat_rec[ch];
+				last_feat[ch] = c_f;
+
+				const float dL_dfchannel = dL_dfeat[ch];
+				dL_dalpha += (c_f - accum_feat_rec[ch]) * dL_dfchannel;
+				atomicAdd(&(dL_dfeats3D[global_id * FC + ch]), dchannel_dcolor * dL_dfchannel);
 			}
 			
 			// gradient for the distoration loss is taken from 2DGS paper, please check https://arxiv.org/pdf/2403.17888.pdf
@@ -1043,6 +1068,7 @@ void BACKWARD::render(
 	const float2* means2D,
 	const float4* conic_opacity,
 	const float* colors,
+	const float* feats3D,
 	const float* view2gaussian,
 	const float* cov3Ds,
 	const float* viewmatrix,
@@ -1054,14 +1080,16 @@ void BACKWARD::render(
 	const float* center_depth,
 	const float4* point_alphas,
 	const float* dL_dpixels,
+	const float* dL_dfeats2D,
 	float3* dL_dmean2D,
 	float4* dL_dconic2D,
 	float* dL_dopacity,
 	float* dL_dcolors,
+	float* dL_dfeats3D,
 	float* dL_dscales,
 	float* dL_dview2gaussian)
 {
-	renderCUDA<NUM_CHANNELS> << <grid, block >> >(
+	renderCUDA<NUM_CHANNELS, NUM_FEATS_CHANNELS> << <grid, block >> >(
 		ranges,
 		point_list,
 		W, H,
@@ -1071,6 +1099,7 @@ void BACKWARD::render(
 		means2D,
 		conic_opacity,
 		colors,
+		feats3D,
 		view2gaussian,
 		cov3Ds,
 		viewmatrix,
@@ -1082,10 +1111,12 @@ void BACKWARD::render(
 		center_depth,
 		point_alphas,
 		dL_dpixels,
+		dL_dfeats2D,
 		dL_dmean2D,
 		dL_dconic2D,
 		dL_dopacity,
 		dL_dcolors,
+		dL_dfeats3D,
 		dL_dscales,
 		dL_dview2gaussian
 		);

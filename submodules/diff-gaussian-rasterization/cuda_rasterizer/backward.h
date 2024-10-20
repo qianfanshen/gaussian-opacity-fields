@@ -32,6 +32,7 @@ namespace BACKWARD
 		const float2* means2D,
 		const float4* conic_opacity,
 		const float* colors,
+		const float* feats3D,
 		const float* view2gaussian,
 		const float* cov3Ds,
 		const float* viewmatrix,
@@ -43,10 +44,12 @@ namespace BACKWARD
 		const float* center_depth,
 		const float4* point_alphas,
 		const float* dL_dpixels,
+		const float* dL_dfeat2D,
 		float3* dL_dmean2D,
 		float4* dL_dconic2D,
 		float* dL_dopacity,
 		float* dL_dcolors,
+		float* dL_dfeat3D,
 		float* dL_dscales,
 		float* dL_dview2gaussian);
 

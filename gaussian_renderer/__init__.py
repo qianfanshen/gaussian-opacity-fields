@@ -221,4 +221,4 @@ def integrate(points3D, viewpoint_camera, pc : GaussianModel, pipe, bg_color : t
             "viewspace_points": screenspace_points,
             "visibility_filter" : radii > 0,
             "radii": radii, 
-            "feats": feat}
+            "feats": feats}

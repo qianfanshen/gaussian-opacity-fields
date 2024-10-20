@@ -14,6 +14,7 @@ import numpy as np
 import open3d as o3d
 import cv2
 import torch
+import torch.nn.functional as F
 import torchvision
 import random
 from random import randint
@@ -146,10 +147,15 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
 
         
         render_pkg = render(viewpoint_cam, gaussians, pipe, background, kernel_size=dataset.kernel_size)
-        rendering, viewspace_point_tensor, visibility_filter, radii, feats= render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"], render["feats"]
-        
+        rendering, viewspace_point_tensor, visibility_filter, radii, feats= render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"], render_pkg["feats"]
+        # print(feats.shape)
         image = rendering[:3, :, :]
         floor_mask = viewpoint_cam.floor_mask.to(torch.bool)
+        
+        # semantic loss
+        gt_mask = floor_mask.long()
+        feats_reshaped = feats.permute(1, 2, 0).reshape(-1, 2)
+        loss_semantic = F.cross_entropy(feats_reshaped, gt_mask.view(-1).cuda())
         
         # rgb Loss
         gt_image = viewpoint_cam.original_image.cuda()
@@ -186,17 +192,21 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         lambda_depth_normal = opt.lambda_depth_normal if iteration >= opt.depth_normal_from_iter else 0.0
         
         # Final loss
-        loss = rgb_loss + depth_normal_loss * lambda_depth_normal + distortion_loss * lambda_distortion
+        loss = rgb_loss + depth_normal_loss * lambda_depth_normal + distortion_loss * lambda_distortion + 0.01 * loss_semantic
         loss.backward()
         
         iter_end.record()
 
         is_save_images = False # default to not save images
-        if is_save_images and (iteration % opt.densification_interval == 0):
+        # if is_save_images and (iteration % opt.densification_interval == 0):
+        if iteration % 500 == 0:
             with torch.no_grad():
                 eval_cam = allCameras[random.randint(0, len(allCameras) -1)]
                 
                 rendering = render(eval_cam, gaussians, pipe, background, kernel_size=dataset.kernel_size)["render"]
+                feats = render(eval_cam, gaussians, pipe, background, kernel_size=dataset.kernel_size)["feats"]
+                pred_mask = torch.argmax(feats, dim=0)
+                pred_mask_image = pred_mask.unsqueeze(0).float()
                 image = rendering[:3, :, :]
                 transformed_image = L1_loss_appearance(image, eval_cam.original_image.cuda(), gaussians, eval_cam.idx, return_transformed_image=True)
                 
@@ -233,7 +243,9 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             image_to_show = torch.clamp(image_to_show, 0, 1)
             
             os.makedirs(f"{dataset.model_path}/log_images", exist_ok = True)
+            os.makedirs(f"{dataset.model_path}/log_images/semantic", exist_ok = True)
             torchvision.utils.save_image(image_to_show, f"{dataset.model_path}/log_images/{iteration}.jpg")
+            torchvision.utils.save_image(pred_mask_image, f"{dataset.model_path}/log_images/semantic/{iteration}.jpg")
             
         with torch.no_grad():
             # Progress bar

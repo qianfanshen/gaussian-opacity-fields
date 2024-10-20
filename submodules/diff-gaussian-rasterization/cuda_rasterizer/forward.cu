@@ -811,7 +811,7 @@ void FORWARD::preprocess_points(int PN, int D, int M,
 // Main rasterization method. Collaboratively works on one tile per
 // block, each thread treats one pixel. Alternates between fetching 
 // and rasterizing data.
-template <uint32_t CHANNELS>
+template <uint32_t CHANNELS, uint32_t FEATS_CHANNELS>
 __global__ void __launch_bounds__(BLOCK_X * BLOCK_Y)
 integrateCUDA(
 	const uint2* __restrict__ gaussian_ranges,
@@ -823,6 +823,7 @@ integrateCUDA(
 	const float2* __restrict__ subpixel_offset,
 	const float2* __restrict__ points2D,
 	const float* __restrict__ features,
+	const float* __restrict__ feats3D,
 	const float* __restrict__ view2gaussian,
 	const float* __restrict__ cov3Ds,
 	const float* viewmatrix,
@@ -836,6 +837,7 @@ integrateCUDA(
 	// float4* __restrict__ point_alphas,
 	const float* __restrict__ bg_color,
 	float* __restrict__ out_color,
+	float* __restrict__ out_feats,
 	float* __restrict__ out_alpha_integrated,
 	float* __restrict__ out_color_integrated)
 {
@@ -885,6 +887,7 @@ integrateCUDA(
 	uint32_t contributor = 0;
 	uint32_t last_contributor = 0;
 	float C[CHANNELS*2+2] = { 0 };
+	float F[FEATS_CHANNELS] = { 0 };
 
 	uint32_t n_contrib_local = 0;
 	uint16_t contributed_ids[MAX_NUM_CONTRIBUTORS*4] = { 0 };
@@ -970,6 +973,9 @@ integrateCUDA(
 					// Eq. (3) from 3D Gaussian splatting paper.
 					for (int ch = 0; ch < CHANNELS; ch++)
 						C[ch] += features[collected_id[j] * CHANNELS + ch] * alpha * corner_Ts[k];
+
+					for (int ch = 0; ch < FEATS_CHANNELS; ch++)
+						F[ch] += feats3D[collected_id[j] * FEATS_CHANNELS + ch] * alpha * corner_Ts[k];
 				}
 							
 				// store maximal depth
@@ -1012,6 +1018,9 @@ integrateCUDA(
 
 		for (int ch = 0; ch < CHANNELS; ch++)
 			out_color[ch * H * W + pix_id] = C[ch] + corner_Ts[0] * bg_color[ch];
+
+		for (int ch = 0; ch < FEATS_CHANNELS; ch++)
+			out_feats[ch * H * W + pix_id] = F[ch];
 
 		// depth and alpha
 		out_color[DEPTH_OFFSET * H * W + pix_id] = C[CHANNELS * 2];
@@ -1239,6 +1248,7 @@ void FORWARD::integrate(
 	const float2* subpixel_offset,
 	const float2* points2D,
 	const float* colors,
+	const float* feats3D,
 	const float* view2gaussian,
 	const float* cov3Ds,
 	const float* viewmatrix,
@@ -1252,10 +1262,11 @@ void FORWARD::integrate(
 	// float4* center_alphas,
 	const float* bg_color,
 	float* out_color,
+	float* out_feats,
 	float* out_alpha_integrated,
 	float* out_color_integrated)
 {
-	integrateCUDA<NUM_CHANNELS> << <grid, block >> > (
+	integrateCUDA<NUM_CHANNELS, NUM_FEATS_CHANNELS> << <grid, block >> > (
 		gaussian_ranges,
 		point_ranges,
 		gaussian_list,
@@ -1265,6 +1276,7 @@ void FORWARD::integrate(
 		subpixel_offset,
 		points2D,
 		colors,
+		feats3D,
 		view2gaussian,
 		cov3Ds,
 		viewmatrix,
@@ -1278,6 +1290,7 @@ void FORWARD::integrate(
 		// center_alphas,
 		bg_color,
 		out_color,
+		out_feats,
 		out_alpha_integrated,
 		out_color_integrated);
 }
